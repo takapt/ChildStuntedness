@@ -1,3 +1,5 @@
+#define NDEBUG
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -62,6 +64,36 @@ typedef long long ll;
 typedef pair<int, int> pint;
 
 
+
+
+
+#ifdef _MSC_VER
+#include <Windows.h>
+#else
+#include <sys/time.h>
+#endif
+class Timer
+{
+    typedef double time_type;
+    typedef unsigned int skip_type;
+
+private:
+    time_type start_time;
+    time_type elapsed;
+
+#ifdef _MSC_VER
+    time_type get_ms() { return (time_type)GetTickCount64() / 1000; }
+#else
+    time_type get_ms() { struct timeval t; gettimeofday(&t, NULL); return (time_type)t.tv_sec * 1000 + (time_type)t.tv_usec / 1000; }
+#endif
+
+public:
+    Timer() {}
+
+    void start() { start_time = get_ms(); }
+    time_type get_elapsed() { return elapsed = get_ms() - start_time; }
+};
+
 class Random
 {
 private:
@@ -122,6 +154,8 @@ public:
         return a;
     }
 };
+Timer g_timer;
+
 
 Random dc_tree_rand;
 typedef vector<double> Feature;
@@ -157,7 +191,10 @@ public:
         assert(0 < SPLIT_DIMENSION_SAMPLES && SPLIT_DIMENSION_SAMPLES <= FEATURE_SIZE);
         assert(0 < bag_size && bag_size <= (int)features.size());
 
-        vector<int> bag = dc_tree_rand.choose(features.size(), bag_size);
+        // TODO: 重複には(* count)の重みをかける
+        vector<int> bag(bag_size);
+        rep(i, bag_size)
+            bag[i] = dc_tree_rand.next_int(features.size());
 
 
         nodes.push_back(TreeNode(0));
@@ -217,7 +254,7 @@ public:
                 double left_squared_sum = 0;
                 double left_sum = 0;
 
-                const int split_size_constraint = 1 + cur_features.size() / 20;
+                const int split_size_constraint = max<int>(1, (int)cur_features.size() / 3);
                 const double split_lower_x = x.front().first + eps;
                 const double split_upper_x = x.back().first - eps;
                 rep(i, sz(cur_features) - split_size_constraint)
@@ -340,10 +377,10 @@ public:
         const int FEATURE_SIZE = features[0].size();
 
         DecisionTreeConfig config;
-        config.bag_size = features.size() / 2;
-        config.max_level = 30;
+        config.bag_size = features.size();
+        config.max_level = 256;
         config.leaf_size = 50;
-        config.split_dimension_samples = FEATURE_SIZE / 2;
+        config.split_dimension_samples = FEATURE_SIZE * 2 / 3;
 
         const int num_trees = 100;
         rep(tree_i, num_trees)
@@ -391,19 +428,38 @@ Feature create_feature(const Fetus& fetus)
     Feature feature;
 
     {
-        const int SEGS = 23;
+        const int SEGS = 40;
         rep(i, SEGS * ULTRA_SIZE)
             feature.push_back(0);
+
+        double seg_nearest_dist[ULTRA_SIZE][SEGS];
+        rep(ultra_i, ULTRA_SIZE) rep(seg_i, SEGS)
+            seg_nearest_dist[ultra_i][seg_i] = SEGS * 0.15;
         for (auto& row : fetus.rows)
         {
-            int seg = min<int>(SEGS - 1, row.time * SEGS);
-            rep(i, ULTRA_SIZE)
+            const double pos = row.time * SEGS;
+//             const int seg = min<int>(SEGS - 1, row.time * SEGS);
+//             rep(i, ULTRA_SIZE)
+//             {
+//                 feature[seg * ULTRA_SIZE + i] = row.ultra[i];
+//                 if (seg > 0 && feature[(seg - 1) * ULTRA_SIZE + i] == 0)
+//                     feature[(seg - 1) * ULTRA_SIZE + i] = row.ultra[i];
+//                 if (seg < ULTRA_SIZE - 1 && feature[(seg + 1) * ULTRA_SIZE + i] == 0)
+//                     feature[(seg + 1) * ULTRA_SIZE + i] = row.ultra[i];
+//             }
+
+            rep(ultra_i, ULTRA_SIZE)
             {
-                feature[seg * ULTRA_SIZE + i] = row.ultra[i];
-                if (seg > 0 && feature[(seg - 1) * ULTRA_SIZE + i] == 0)
-                    feature[(seg - 1) * ULTRA_SIZE + i] = row.ultra[i];
-                if (seg < ULTRA_SIZE - 1 && feature[(seg + 1) * ULTRA_SIZE + i] == 0)
-                    feature[(seg + 1) * ULTRA_SIZE + i] = row.ultra[i];
+                rep(seg_i, SEGS)
+                {
+                    const double center = seg_i + 0.5;
+                    double dist = abs(pos - center);
+                    if (dist < seg_nearest_dist[ultra_i][seg_i])
+                    {
+                        seg_nearest_dist[ultra_i][seg_i] = dist;
+                        feature[seg_i * ULTRA_SIZE + ultra_i] = row.ultra[ultra_i];
+                    }
+                }
             }
         }
     }
@@ -419,12 +475,127 @@ Feature create_feature(const Fetus& fetus)
         feature.push_back(max_t);
     }
 
-    feature.push_back(fetus.rows.size());
-    feature.push_back(fetus.rows.back().status);
+//     feature.push_back(fetus.rows.size());
+//     feature.push_back(fetus.rows.back().status);
     feature.push_back(fetus.rows.back().sex);
 
     return feature;
 }
+
+
+double calc_error(double weight, double duration, double correct_weight, double correct_duration)
+{
+    assert(0 <= correct_weight && correct_weight <= 1);
+    assert(0 <= correct_duration && correct_duration <= 1);
+    assert(0 <= weight && weight <= 1);
+    assert(0 <= duration && duration <= 1);
+
+    const static double inverseS[2][2] = {
+         3554.42,  -328.119,
+         -328.119,  133.511
+    };
+
+    double dw = weight - correct_weight;
+    double dd = duration - correct_duration;
+
+    double x = dd * inverseS[0][0] + dw * inverseS[0][1];
+    double y = dd * inverseS[1][0] + dw * inverseS[1][1];
+
+    double e = x * dd + y * dw;
+    return e;
+}
+
+double calc_sse0(const vector<Fetus>& fetus_data)
+{
+    double ave_weight = 0;
+    double ave_duration = 0;
+    for (auto& fetus : fetus_data)
+    {
+        ave_weight += fetus.weight;
+        ave_duration += fetus.duration;
+    }
+    ave_weight /= fetus_data.size();
+    ave_duration /= fetus_data.size();
+
+    double sse = 0;
+    for (auto& fetus : fetus_data)
+        sse += calc_error(fetus.weight, fetus.duration, ave_weight, ave_duration);
+    return sse;
+}
+
+
+pair<map<int, double>, map<int, double>> predict_by_dctree(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
+{
+    vector<Feature> train_features;
+    vector<double> weight_label, duration_label;
+    for (auto& train : train_data)
+    {
+        train_features.push_back(create_feature(train));
+        weight_label.push_back(train.weight);
+        duration_label.push_back(train.duration);
+    }
+
+    DecisionTreeConfig config;
+    config.bag_size = train_features.size();
+    config.max_level = 40;
+    config.leaf_size = 40;
+    config.split_dimension_samples = train_features[0].size();
+    map<int, double> predict_weight;
+    {
+        DecisionTree tree(train_features, weight_label, config);
+        for (auto& test : test_data)
+            predict_weight[test.id] = tree.predict(create_feature(test));
+    }
+
+    map<int, double> predict_duration;
+    {
+        DecisionTree tree(train_features, duration_label, config);
+        for (auto& test : test_data)
+            predict_duration[test.id] = tree.predict(create_feature(test));
+    }
+
+    return make_pair(predict_weight, predict_duration);
+}
+
+pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
+{
+    vector<Feature> train_features;
+    vector<double> weight_label, duration_label;
+    for (auto& train : train_data)
+    {
+        train_features.push_back(create_feature(train));
+        weight_label.push_back(train.weight);
+        duration_label.push_back(train.duration);
+    }
+
+    map<int, double> predict_weight;
+    {
+        RandomForest rf(train_features, weight_label);
+        for (auto& test : test_data)
+            predict_weight[test.id] = rf.predict(create_feature(test));
+    }
+
+    map<int, double> predict_duration;
+    {
+        RandomForest rf(train_features, duration_label);
+        for (auto& test : test_data)
+            predict_duration[test.id] = rf.predict(create_feature(test));
+    }
+
+    return make_pair(predict_weight, predict_duration);
+}
+
+double calc_score(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
+{
+    const double sse0 = calc_sse0(test_data);
+    double sse = 0;
+    for (auto& test : test_data)
+        sse += calc_error(predict_weight[test.id], predict_duration[test.id], test.weight, test.duration);
+    double score = 1e6 * max(0.0, 1 - sse / sse0);
+    return score;
+}
+
+
 
 vector<Fetus> parse_train(const vector<string>& csv)
 {
@@ -491,46 +662,8 @@ vector<Fetus> parse_test(const vector<string>& csv)
     return fetus_data;
 }
 
-double calc_error(double weight, double duration, double correct_weight, double correct_duration)
-{
-    assert(0 <= correct_weight && correct_weight <= 1);
-    assert(0 <= correct_duration && correct_duration <= 1);
-    assert(0 <= weight && weight <= 1);
-    assert(0 <= duration && duration <= 1);
 
-    const static double inverseS[2][2] = {
-         3554.42,  -328.119,
-         -328.119,  133.511
-    };
-
-    double dw = weight - correct_weight;
-    double dd = duration - correct_duration;
-
-    double x = dd * inverseS[0][0] + dw * inverseS[0][1];
-    double y = dd * inverseS[1][0] + dw * inverseS[1][1];
-
-    double e = x * dd + y * dw;
-    return e;
-}
-
-double calc_sse0(const vector<Fetus>& fetus_data)
-{
-    double ave_weight = 0;
-    double ave_duration = 0;
-    for (auto& fetus : fetus_data)
-    {
-        ave_weight += fetus.weight;
-        ave_duration += fetus.duration;
-    }
-    ave_weight /= fetus_data.size();
-    ave_duration /= fetus_data.size();
-
-    double sse = 0;
-    for (auto& fetus : fetus_data)
-        sse += calc_error(fetus.weight, fetus.duration, ave_weight, ave_duration);
-    return sse;
-}
-
+#ifdef LOCAL
 vector<string> read_file(const string& filename)
 {
     fstream fs(filename);
@@ -539,121 +672,84 @@ vector<string> read_file(const string& filename)
         lines.push_back(s);
     return lines;
 }
-
-
-struct WeightDuration
+void write_features_labels(const string& filename, vector<Fetus> fetus_data)
 {
-    int id;
-    double weight;
-    double duration;
-    WeightDuration()
-        : id(-1), weight(-1), duration(-1)
+    random_shuffle(all(fetus_data));
+    ofstream fs(filename);
+    for (auto& fetus : fetus_data)
     {
+        auto feature = create_feature(fetus);
+
+        for (auto x : feature)
+            fs << x << " ";
+        fs << fetus.weight << " " << fetus.duration << endl;
     }
-
-    WeightDuration(int id, double weight, double duration)
-        : id(id), weight(weight), duration(duration)
-    {
-    }
-
-    WeightDuration(const Fetus& fetus)
-        : id(fetus.id), weight(fetus.weight), duration(fetus.duration)
-    {
-        assert(0 <= id);
-        assert(0 <= weight && weight <= 1);
-        assert(0 <= duration && duration <= 1);
-    }
-};
-
-double predict_by_dc(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
-{
-    vector<Feature> train_features;
-    vector<double> weight_label, duration_label;
-    for (auto& train : train_data)
-    {
-        train_features.push_back(create_feature(train));
-        weight_label.push_back(train.weight);
-        duration_label.push_back(train.duration);
-
-    }
-
-    DecisionTreeConfig config;
-    config.bag_size = train_data.size();
-    config.max_level = 45;
-    config.leaf_size = 50;
-    config.split_dimension_samples = create_feature(train_data[0]).size();
-    map<int, double> predict_weight;
-    {
-        DecisionTree tree(train_features, weight_label, config);
-        for (auto& test : test_data)
-            predict_weight[test.id] = tree.predict(create_feature(test));
-    }
-
-    map<int, double> predict_duration;
-    {
-        DecisionTree tree(train_features, duration_label, config);
-        for (auto& test : test_data)
-            predict_duration[test.id] = tree.predict(create_feature(test));
-    }
-
-    const double sse0 = calc_sse0(test_data);
-    double sse = 0;
-    for (auto& test : test_data)
-        sse += calc_error(predict_weight[test.id], predict_duration[test.id], test.weight, test.duration);
-    const double score = 1e6 * max(0.0, 1 - sse / sse0);
-
-//     dump(sse0);
-//     dump(sse);
-//     dump(score);
-
-    return score;
+    fs.close();
 }
-
-pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
+int main()
 {
-    vector<Feature> train_features;
-    vector<double> weight_label, duration_label;
-    for (auto& train : train_data)
+    const string train_filename = "exampleData.csv";
+
+    vector<string> train_csv = read_file(train_filename);
+
+    g_timer.start();
+
+    vector<Fetus> fetus_data = parse_train(train_csv);
+
+//     write_features_labels("features.txt", fetus_data);
+//     return 0;
+
+    srand(time(NULL));
+    const int T = 100;
+    vector<vector<Fetus>> train_data_set;
+    vector<vector<Fetus>> test_data_set;
+    rep(_, T)
     {
-        train_features.push_back(create_feature(train));
-        weight_label.push_back(train.weight);
-        duration_label.push_back(train.duration);
+        const int train_size = fetus_data.size() * 0.66;
+        train_data_set.push_back(vector<Fetus>(fetus_data.begin(), fetus_data.begin() + train_size));
+        test_data_set.push_back(vector<Fetus>(fetus_data.begin() + train_size, fetus_data.end()));
+
+        random_shuffle(all(fetus_data));
     }
 
-    map<int, double> predict_weight;
+    vector<double> scores(T);
+#pragma omp parallel for
+    rep(test_i, T)
     {
-        RandomForest rf(train_features, weight_label);
-        for (auto& test : test_data)
-            predict_weight[test.id] = rf.predict(create_feature(test));
-    }
+        const auto& train_data = train_data_set[test_i];
+        const auto& test_data = test_data_set[test_i];
 
-    map<int, double> predict_duration;
-    {
-        RandomForest rf(train_features, duration_label);
-        for (auto& test : test_data)
-            predict_duration[test.id] = rf.predict(create_feature(test));
-    }
+        auto res = predict(train_data, test_data);
+//         auto res = predict_by_dctree(train_data, test_data);
+        auto& predict_weight = res.first;
+        auto& predict_duration = res.second;
 
-    return make_pair(predict_weight, predict_duration);
+        double score = calc_score(test_data, predict_weight, predict_duration);
+//         dump(score);
+
+        scores[test_i] = score;
+    }
+    const double ave = accumulate(all(scores), 0.0) / T;
+    dump(ave);
+
+//     sort(all(scores));
+//     dump(scores);
 }
+#endif
 
-double calc_score(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
-{
-    const double sse0 = calc_sse0(test_data);
-    double sse = 0;
-    for (auto& test : test_data)
-        sse += calc_error(predict_weight[test.id], predict_duration[test.id], test.weight, test.duration);
-    double score = 1e6 * max(0.0, 1 - sse / sse0);
-    return score;
-}
+
 
 class ChildStuntedness
 {
 public:
     vector<double> predict(vector<string>& training, vector<string>& testing)
     {
+        g_timer.start();
+
         auto train_data = parse_train(training);
         auto test_data = parse_test(testing);
+
+        dump(g_timer.get_elapsed());
 
         auto prepre = ::predict(train_data, test_data);
         auto& predict_weight = prepre.first;
@@ -674,47 +770,3 @@ public:
         return res;
     }
 };
-
-#ifdef LOCAL
-int main()
-{
-    const string train_filename = "exampleData.csv";
-
-    vector<string> train_csv = read_file(train_filename);
-    vector<Fetus> fetus_data = parse_train(train_csv);
-
-    const int T = 200;
-    vector<vector<Fetus>> train_data_set;
-    vector<vector<Fetus>> test_data_set;
-    rep(_, T)
-    {
-        const int train_size = fetus_data.size() * 0.66;
-        train_data_set.push_back(vector<Fetus>(fetus_data.begin(), fetus_data.begin() + train_size));
-        test_data_set.push_back(vector<Fetus>(fetus_data.begin() + train_size, fetus_data.end()));
-
-        random_shuffle(all(fetus_data));
-    }
-
-    vector<double> scores(T);
-#pragma omp parallel for
-    rep(test_i, T)
-    {
-        const auto& train_data = train_data_set[test_i];
-        const auto& test_data = test_data_set[test_i];
-
-        auto res = predict(train_data, test_data);
-        auto& predict_weight = res.first;
-        auto& predict_duration = res.second;
-
-        double score = calc_score(test_data, predict_weight, predict_duration);
-        dump(score);
-
-        scores[test_i] = score;
-    }
-    const double ave = accumulate(all(scores), 0.0) / T;
-    dump(ave);
-
-//     sort(all(scores));
-//     dump(scores);
-}
-#endif
