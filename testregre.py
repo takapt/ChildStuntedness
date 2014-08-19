@@ -55,7 +55,7 @@ def calc_sse(results):
 
 def do_test(train_data, test_data):
     def build(a, b):
-        return RandomForestRegressor(n_estimators=100, max_features=0.66).fit(a, b)
+        return RandomForestRegressor(n_estimators=100, min_samples_split=30).fit(a, b)
 
     weight_rf = build(train_data[0], train_data[1])
     duration_rf = build(train_data[0], train_data[2])

@@ -379,10 +379,10 @@ public:
         DecisionTreeConfig config;
         config.bag_size = features.size();
         config.max_level = 256;
-        config.leaf_size = 50;
-        config.split_dimension_samples = FEATURE_SIZE * 2 / 3;
+        config.leaf_size = 30;
+        config.split_dimension_samples = FEATURE_SIZE;
 
-        const int num_trees = 100;
+        const int num_trees = 70; 
         rep(tree_i, num_trees)
             trees.push_back(DecisionTree(features, labels, config));
     }
@@ -428,40 +428,55 @@ Feature create_feature(const Fetus& fetus)
     Feature feature;
 
     {
-        const int SEGS = 40;
-        rep(i, SEGS * ULTRA_SIZE)
-            feature.push_back(0);
+        const int SEGS = 80;
 
-        double seg_nearest_dist[ULTRA_SIZE][SEGS];
-        rep(ultra_i, ULTRA_SIZE) rep(seg_i, SEGS)
-            seg_nearest_dist[ultra_i][seg_i] = SEGS * 0.15;
+        double seg_nearest_dist[SEGS];
+        double ultra[SEGS][ULTRA_SIZE];
+        rep(seg_i, SEGS)
+            seg_nearest_dist[seg_i] = SEGS * 0.1;
+        clr(ultra, 0);
+        double ave_ultra[SEGS] = {};
         for (auto& row : fetus.rows)
         {
             const double pos = row.time * SEGS;
-//             const int seg = min<int>(SEGS - 1, row.time * SEGS);
-//             rep(i, ULTRA_SIZE)
-//             {
-//                 feature[seg * ULTRA_SIZE + i] = row.ultra[i];
-//                 if (seg > 0 && feature[(seg - 1) * ULTRA_SIZE + i] == 0)
-//                     feature[(seg - 1) * ULTRA_SIZE + i] = row.ultra[i];
-//                 if (seg < ULTRA_SIZE - 1 && feature[(seg + 1) * ULTRA_SIZE + i] == 0)
-//                     feature[(seg + 1) * ULTRA_SIZE + i] = row.ultra[i];
-//             }
 
+            double ave = 0;
+            int num_avalable = 0;
             rep(ultra_i, ULTRA_SIZE)
             {
-                rep(seg_i, SEGS)
+                if (row.ultra[ultra_i] > 0)
                 {
-                    const double center = seg_i + 0.5;
-                    double dist = abs(pos - center);
-                    if (dist < seg_nearest_dist[ultra_i][seg_i])
+                    ave += row.ultra[ultra_i];
+                    ++num_avalable;
+                }
+            }
+            if (num_avalable > 0)
+                ave /= num_avalable;
+
+            rep(seg_i, SEGS)
+            {
+                const double center = seg_i + 0.5;
+                const double dist = abs(pos - center);
+                if (dist < seg_nearest_dist[seg_i])
+                {
+                    rep(ultra_i, ULTRA_SIZE)
                     {
-                        seg_nearest_dist[ultra_i][seg_i] = dist;
-                        feature[seg_i * ULTRA_SIZE + ultra_i] = row.ultra[ultra_i];
+                        if (row.ultra[ultra_i] > 0)
+                        {
+                            seg_nearest_dist[seg_i] = dist;
+                            ultra[seg_i][ultra_i] = row.ultra[ultra_i];
+                        }
                     }
+
+                    ave_ultra[seg_i] = ave;
                 }
             }
         }
+
+        rep(seg_i, SEGS) rep(ultra_i, ULTRA_SIZE)
+            feature.push_back(ultra[seg_i][ultra_i]);
+        rep(seg_i, SEGS)
+            feature.push_back(ave_ultra[seg_i]);
     }
 
     {
@@ -471,12 +486,14 @@ Feature create_feature(const Fetus& fetus)
             upmin(min_t, row.time);
             upmax(max_t, row.time);
         }
+
         feature.push_back(min_t);
         feature.push_back(max_t);
+        feature.push_back((max_t - min_t) / fetus.rows.size());
     }
 
-//     feature.push_back(fetus.rows.size());
-//     feature.push_back(fetus.rows.back().status);
+    feature.push_back(fetus.rows.size());
+    feature.push_back(fetus.rows.back().status);
     feature.push_back(fetus.rows.back().sex);
 
     return feature;
@@ -699,8 +716,8 @@ int main()
 //     write_features_labels("features.txt", fetus_data);
 //     return 0;
 
-    srand(time(NULL));
-    const int T = 100;
+//     srand(time(NULL));
+    const int T = 30;
     vector<vector<Fetus>> train_data_set;
     vector<vector<Fetus>> test_data_set;
     rep(_, T)
