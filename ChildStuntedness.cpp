@@ -199,29 +199,35 @@ public:
 
         nodes.push_back(TreeNode(0));
 
+        vector<int> feature_indices(bag_size);
+
         // TODO: vector<int>はやめる。inplaceな配列一個持って、(left, right)をstackに突っ込む
-        stack<pair<int, vector<int>>> sta;
-        sta.push(make_pair(0, bag));
+//         stack<pair<int, vector<int>>> sta;
+//         sta.push(make_pair(0, bag));
+        stack<pair<int, pint>> sta;
+        sta.push(make_pair(0, pint(0, bag_size)));
         while (!sta.empty())
         {
             int cur_node = sta.top().first;
-            const vector<int> cur_features = sta.top().second;
+//             const vector<int> cur_features = sta.top().second;
+            const int cur_left = sta.top().second.first;
+            const int cur_right = sta.top().second.second;
+            const int cur_size = cur_right - cur_left;
             assert(!cur_features.empty());
             sta.pop();
 
-            if (nodes[cur_node].level >= max_level || (int)cur_features.size() <= leaf_size)
+            if (nodes[cur_node].level >= max_level || cur_size <= leaf_size)
             {
                 double ave = 0;
-                for (int i : cur_features)
-                    ave += label[i];
-                ave /= cur_features.size();
+                for (int i = cur_left; i < cur_right; ++i)
+                    ave += label[feature_indices[i]];
+                ave /= cur_size;
                 nodes[cur_node].value = ave;
 
                 double var = 0;
-                for (int i : cur_features)
-                    var += (label[i] - ave) * (label[i] - ave);
-                var /= cur_features.size();
-//                 printf("%3d, %3d: %.8f\n", sz(cur_features), nodes[cur_node].level, sqrt(var));
+                for (int i = cur_left; i < cur_right; ++i)
+                    var += (label[feature_indices[i]] - ave) * (label[feature_indices[i]] - ave);
+                var /= cur_size;
 
                 continue;
             }
@@ -233,8 +239,8 @@ public:
             for (int split_dimension : split_dimensions)
             {
                 vector<pair<double, int>> x;
-                for (int i : cur_features)
-                    x.push_back(make_pair(features[i][split_dimension], i));
+                for (int i = cur_left; i < cur_right; ++i)
+                    x.push_back(make_pair(features[feature_indices[i]][split_dimension], feature_indices[i]));
                 sort(all(x));
 
                 const double eps = 1e-9;
@@ -254,11 +260,14 @@ public:
                 double left_squared_sum = 0;
                 double left_sum = 0;
 
-                const int split_size_constraint = max<int>(1, (int)cur_features.size() / 3);
+                const int split_size_constraint = max<int>(1, cur_size/ 3);
                 const double split_lower_x = x.front().first + eps;
                 const double split_upper_x = x.back().first - eps;
-                rep(i, sz(cur_features) - split_size_constraint)
+//                 rep(i, sz(cur_features) - split_size_constraint)
+                for (int fi = cur_left; fi < cur_right - split_size_constraint; ++fi)
                 {
+                    const int i = feature_indices[fi];
+
                     const double t = label[x[i].second];
 
                     ++left_n;
@@ -291,10 +300,15 @@ public:
             if (best_split_dimension == -1)
             {
                 double ave = 0;
-                for (int i : cur_features)
-                    ave += label[i];
-                ave /= cur_features.size();
+                for (int i = cur_left; i < cur_right; ++i)
+                    ave += label[feature_indices[i]];
+                ave /= cur_size;
                 nodes[cur_node].value = ave;
+
+                double var = 0;
+                for (int i = cur_left; i < cur_right; ++i)
+                    var += (label[feature_indices[i]] - ave) * (label[feature_indices[i]] - ave);
+                var /= cur_size;
 
                 continue;
             }
@@ -302,35 +316,31 @@ public:
             nodes[cur_node].split_dimension = best_split_dimension;
             nodes[cur_node].value = best_split_x;
 
-            vector<int> left_features, right_features;
-            for (int i : cur_features)
+            int left_right = 0, right_left = cur_right - 1;
+            while (left_right <= right_left)
             {
-                if (features[i][best_split_dimension] < best_split_x)
-                    left_features.push_back(i);
+                if (features[feature_indices[left_right]][best_split_dimension] < best_split_x)
+                {
+                    ++left_right;
+                }
                 else
-                    right_features.push_back(i);
+                {
+                    swap(feature_indices[left_right], feature_indices[right_left]);
+                    --right_left;
+                }
             }
-            if (left_features.empty())
-            {
-                vector<double> x;
-                for (int i : cur_features)
-                    x.push_back(features[i][best_split_dimension]);
-                sort(all(x));
-                dump(x);
-                dump(best_split_x);
-            }
-            assert(!left_features.empty());
-            assert(!right_features.empty());
 
 //             printf("%3d %3d\n", (int)left_features.size(), (int)right_features.size());
 
             nodes[cur_node].left = nodes.size();
             nodes.push_back(TreeNode(nodes[cur_node].level + 1));
-            sta.push(make_pair(nodes[cur_node].left, left_features));
+//             sta.push(make_pair(nodes[cur_node].left, left_features));
+            sta.push(make_pair(nodes[cur_node].left, pint(cur_left, left_right)));
 
             nodes[cur_node].right = nodes.size();
             nodes.push_back(TreeNode(nodes[cur_node].level + 1));
-            sta.push(make_pair(nodes[cur_node].right, right_features));
+//             sta.push(make_pair(nodes[cur_node].right, right_features));
+            sta.push(make_pair(nodes[cur_node].right, pint(left_right, cur_right)));
         }
     }
 
