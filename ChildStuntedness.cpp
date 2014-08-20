@@ -41,7 +41,7 @@ template <typename T, typename U> ostream& operator<<(ostream& os, const pair<T,
 template <typename T> void print(T a, int n, const string& split = " ") { for (int i = 0; i < n; i++) { cout << a[i]; if (i + 1 != n) cout << split; } cout << endl; }
 template <typename T> void print2d(T a, int w, int h, int width = -1, int br = 0) { for (int i = 0; i < h; ++i) { for (int j = 0; j < w; ++j) { if (width != -1) cout.width(width); cout << a[i][j] << ' '; } cout << endl; } while (br--) cout << endl; }
 template <typename T> void input(T& a, int n) { for (int i = 0; i < n; ++i) cin >> a[i]; }
-#define dump(v) (cerr << #v << ": " << v << endl)
+#define dump(v) (cout << #v << ": " << v << endl)
 
 #define rep(i, n) for (int i = 0; i < (int)(n); ++i)
 #define erep(i, n) for (int i = 0; i <= (int)(n); ++i)
@@ -199,48 +199,36 @@ public:
 
         nodes.push_back(TreeNode(0));
 
-        vector<int> feature_indices(bag_size);
-
         // TODO: vector<int>はやめる。inplaceな配列一個持って、(left, right)をstackに突っ込む
-//         stack<pair<int, vector<int>>> sta;
-//         sta.push(make_pair(0, bag));
-        stack<pair<int, pint>> sta;
-        sta.push(make_pair(0, pint(0, bag_size)));
+        stack<pair<int, vector<int>>> sta;
+        sta.push(make_pair(0, bag));
         while (!sta.empty())
         {
             int cur_node = sta.top().first;
-//             const vector<int> cur_features = sta.top().second;
-            const int cur_left = sta.top().second.first;
-            const int cur_right = sta.top().second.second;
-            const int cur_size = cur_right - cur_left;
+            const vector<int> cur_features = sta.top().second;
             assert(!cur_features.empty());
             sta.pop();
 
-            if (nodes[cur_node].level >= max_level || cur_size <= leaf_size)
+            if (nodes[cur_node].level >= max_level || (int)cur_features.size() <= leaf_size)
             {
                 double ave = 0;
-                for (int i = cur_left; i < cur_right; ++i)
-                    ave += label[feature_indices[i]];
-                ave /= cur_size;
+                for (int i : cur_features)
+                    ave += label[i];
+                ave /= cur_features.size();
                 nodes[cur_node].value = ave;
-
-                double var = 0;
-                for (int i = cur_left; i < cur_right; ++i)
-                    var += (label[feature_indices[i]] - ave) * (label[feature_indices[i]] - ave);
-                var /= cur_size;
 
                 continue;
             }
 
-            const vector<int> split_dimensions = dc_tree_rand.choose(FEATURE_SIZE, SPLIT_DIMENSION_SAMPLES);
             int best_split_dimension = -1;
             double best_split_x = -1;
             double min_impurity = 1e60;
+            const vector<int> split_dimensions = dc_tree_rand.choose(FEATURE_SIZE, SPLIT_DIMENSION_SAMPLES);
             for (int split_dimension : split_dimensions)
             {
                 vector<pair<double, int>> x;
-                for (int i = cur_left; i < cur_right; ++i)
-                    x.push_back(make_pair(features[feature_indices[i]][split_dimension], feature_indices[i]));
+                for (int i : cur_features)
+                    x.push_back(make_pair(features[i][split_dimension], i));
                 sort(all(x));
 
                 const double eps = 1e-9;
@@ -260,14 +248,11 @@ public:
                 double left_squared_sum = 0;
                 double left_sum = 0;
 
-                const int split_size_constraint = max<int>(1, cur_size/ 3);
+                const int split_size_constraint = max(1, leaf_size / 2);
                 const double split_lower_x = x.front().first + eps;
                 const double split_upper_x = x.back().first - eps;
-//                 rep(i, sz(cur_features) - split_size_constraint)
-                for (int fi = cur_left; fi < cur_right - split_size_constraint; ++fi)
+                rep(i, sz(cur_features) - split_size_constraint)
                 {
-                    const int i = feature_indices[fi];
-
                     const double t = label[x[i].second];
 
                     ++left_n;
@@ -281,13 +266,11 @@ public:
                     if (i >= split_size_constraint && split_lower_x < x[i].first && x[i].first < split_upper_x)
                     {
                         // var(X) = E(X^2) - E(X)^2
-                        // impurity = left_var * (left_n / n) + right_n * (right_n / n)
-                        // denominator = var * n
                         double left_ave = left_sum / left_n;
-                        double left_var_denominator = left_squared_sum - left_ave * left_ave;
+                        double left_var = left_squared_sum / left_n - left_ave * left_ave;
                         double right_ave = right_sum / right_n;
-                        double right_var_denominator = right_squared_sum - right_ave * right_ave;
-                        double impurity = left_var_denominator + right_var_denominator;
+                        double right_var = right_squared_sum / right_n - right_ave * right_ave;
+                        double impurity = left_var * left_n + right_var * right_n;
                         if (impurity < min_impurity)
                         {
                             min_impurity = impurity;
@@ -300,15 +283,10 @@ public:
             if (best_split_dimension == -1)
             {
                 double ave = 0;
-                for (int i = cur_left; i < cur_right; ++i)
-                    ave += label[feature_indices[i]];
-                ave /= cur_size;
+                for (int i : cur_features)
+                    ave += label[i];
+                ave /= cur_features.size();
                 nodes[cur_node].value = ave;
-
-                double var = 0;
-                for (int i = cur_left; i < cur_right; ++i)
-                    var += (label[feature_indices[i]] - ave) * (label[feature_indices[i]] - ave);
-                var /= cur_size;
 
                 continue;
             }
@@ -316,31 +294,26 @@ public:
             nodes[cur_node].split_dimension = best_split_dimension;
             nodes[cur_node].value = best_split_x;
 
-            int left_right = 0, right_left = cur_right - 1;
-            while (left_right <= right_left)
+            vector<int> left_features, right_features;
+            for (int i : cur_features)
             {
-                if (features[feature_indices[left_right]][best_split_dimension] < best_split_x)
-                {
-                    ++left_right;
-                }
+                if (features[i][best_split_dimension] < best_split_x)
+                    left_features.push_back(i);
                 else
-                {
-                    swap(feature_indices[left_right], feature_indices[right_left]);
-                    --right_left;
-                }
+                    right_features.push_back(i);
             }
+            assert(!left_features.empty());
+            assert(!right_features.empty());
 
 //             printf("%3d %3d\n", (int)left_features.size(), (int)right_features.size());
 
             nodes[cur_node].left = nodes.size();
             nodes.push_back(TreeNode(nodes[cur_node].level + 1));
-//             sta.push(make_pair(nodes[cur_node].left, left_features));
-            sta.push(make_pair(nodes[cur_node].left, pint(cur_left, left_right)));
+            sta.push(make_pair(nodes[cur_node].left, left_features));
 
             nodes[cur_node].right = nodes.size();
             nodes.push_back(TreeNode(nodes[cur_node].level + 1));
-//             sta.push(make_pair(nodes[cur_node].right, right_features));
-            sta.push(make_pair(nodes[cur_node].right, pint(left_right, cur_right)));
+            sta.push(make_pair(nodes[cur_node].right, right_features));
         }
     }
 
@@ -382,18 +355,19 @@ private:
 class RandomForest
 {
 public:
-    RandomForest(const vector<Feature>& features, const vector<double>& labels)
+    RandomForest(const vector<Feature>& features, const vector<double>& labels, int num_trees = 100, double tle = 1e9)
     {
         const int FEATURE_SIZE = features[0].size();
 
         DecisionTreeConfig config;
         config.bag_size = features.size();
         config.max_level = 256;
-        config.leaf_size = 30;
+        config.leaf_size = 40;
         config.split_dimension_samples = FEATURE_SIZE;
 
-        const int num_trees = 70; 
-        rep(tree_i, num_trees)
+        Timer timer;
+        timer.start();
+        while ((int)trees.size() < num_trees && timer.get_elapsed() < tle)
             trees.push_back(DecisionTree(features, labels, config));
     }
 
@@ -419,6 +393,11 @@ struct FetusRow
     int sex; // 0 = Male, 1 = Female
     int status; // 1 or 2
     double ultra[ULTRA_SIZE];
+
+    bool operator<(const FetusRow& r) const
+    {
+        return time < r.time;
+    }
 };
 struct Fetus
 {
@@ -438,55 +417,25 @@ Feature create_feature(const Fetus& fetus)
     Feature feature;
 
     {
-        const int SEGS = 80;
+        auto last = *max_element(all(fetus.rows));
+        rep(i, ULTRA_SIZE)
+            feature.push_back(last.ultra[i]);
 
-        double seg_nearest_dist[SEGS];
-        double ultra[SEGS][ULTRA_SIZE];
-        rep(seg_i, SEGS)
-            seg_nearest_dist[seg_i] = SEGS * 0.1;
-        clr(ultra, 0);
-        double ave_ultra[SEGS] = {};
-        for (auto& row : fetus.rows)
-        {
-            const double pos = row.time * SEGS;
+        double ave = 0;
+        rep(i, ULTRA_SIZE)
+            ave += last.ultra[i];
+        ave /= ULTRA_SIZE;
 
-            double ave = 0;
-            int num_avalable = 0;
-            rep(ultra_i, ULTRA_SIZE)
-            {
-                if (row.ultra[ultra_i] > 0)
-                {
-                    ave += row.ultra[ultra_i];
-                    ++num_avalable;
-                }
-            }
-            if (num_avalable > 0)
-                ave /= num_avalable;
+        double var = 0;
+        rep(i, ULTRA_SIZE)
+            var += (last.ultra[i] - ave) * (last.ultra[i] - ave);
+        var /= ULTRA_SIZE;
 
-            rep(seg_i, SEGS)
-            {
-                const double center = seg_i + 0.5;
-                const double dist = abs(pos - center);
-                if (dist < seg_nearest_dist[seg_i])
-                {
-                    rep(ultra_i, ULTRA_SIZE)
-                    {
-                        if (row.ultra[ultra_i] > 0)
-                        {
-                            seg_nearest_dist[seg_i] = dist;
-                            ultra[seg_i][ultra_i] = row.ultra[ultra_i];
-                        }
-                    }
+        feature.push_back(ave);
+        feature.push_back(var);
 
-                    ave_ultra[seg_i] = ave;
-                }
-            }
-        }
-
-        rep(seg_i, SEGS) rep(ultra_i, ULTRA_SIZE)
-            feature.push_back(ultra[seg_i][ultra_i]);
-        rep(seg_i, SEGS)
-            feature.push_back(ave_ultra[seg_i]);
+        auto first = *min_element(all(fetus.rows));
+        feature.push_back(first.ultra[0]);
     }
 
     {
@@ -499,7 +448,7 @@ Feature create_feature(const Fetus& fetus)
 
         feature.push_back(min_t);
         feature.push_back(max_t);
-        feature.push_back((max_t - min_t) / fetus.rows.size());
+        feature.push_back(max_t - min_t);
     }
 
     feature.push_back(fetus.rows.size());
@@ -551,38 +500,12 @@ double calc_sse0(const vector<Fetus>& fetus_data)
 }
 
 
-pair<map<int, double>, map<int, double>> predict_by_dctree(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
-{
-    vector<Feature> train_features;
-    vector<double> weight_label, duration_label;
-    for (auto& train : train_data)
-    {
-        train_features.push_back(create_feature(train));
-        weight_label.push_back(train.weight);
-        duration_label.push_back(train.duration);
-    }
+#ifdef LOCAL
+const double G_TLE = 1919810.0 * 1000;
+#else
+const double G_TLE = 120 * 1000;
+#endif
 
-    DecisionTreeConfig config;
-    config.bag_size = train_features.size();
-    config.max_level = 40;
-    config.leaf_size = 40;
-    config.split_dimension_samples = train_features[0].size();
-    map<int, double> predict_weight;
-    {
-        DecisionTree tree(train_features, weight_label, config);
-        for (auto& test : test_data)
-            predict_weight[test.id] = tree.predict(create_feature(test));
-    }
-
-    map<int, double> predict_duration;
-    {
-        DecisionTree tree(train_features, duration_label, config);
-        for (auto& test : test_data)
-            predict_duration[test.id] = tree.predict(create_feature(test));
-    }
-
-    return make_pair(predict_weight, predict_duration);
-}
 
 pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data, const vector<Fetus>& test_data)
 {
@@ -595,16 +518,19 @@ pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data
         duration_label.push_back(train.duration);
     }
 
+    const double RF_TLE = G_TLE * 0.43;
+    const int MAX_TREES = 1000;
+
     map<int, double> predict_weight;
     {
-        RandomForest rf(train_features, weight_label);
+        RandomForest rf(train_features, weight_label, MAX_TREES, RF_TLE);
         for (auto& test : test_data)
             predict_weight[test.id] = rf.predict(create_feature(test));
     }
 
     map<int, double> predict_duration;
     {
-        RandomForest rf(train_features, duration_label);
+        RandomForest rf(train_features, duration_label, MAX_TREES, RF_TLE);
         for (auto& test : test_data)
             predict_duration[test.id] = rf.predict(create_feature(test));
     }
@@ -612,12 +538,17 @@ pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data
     return make_pair(predict_weight, predict_duration);
 }
 
-double calc_score(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
+double calc_sse(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
 {
-    const double sse0 = calc_sse0(test_data);
     double sse = 0;
     for (auto& test : test_data)
         sse += calc_error(predict_weight[test.id], predict_duration[test.id], test.weight, test.duration);
+    return sse;
+}
+double calc_score(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
+{
+    double sse0 = calc_sse0(test_data);
+    double sse = calc_sse(test_data, predict_weight, predict_duration);
     double score = 1e6 * max(0.0, 1 - sse / sse0);
     return score;
 }
@@ -713,6 +644,57 @@ void write_features_labels(const string& filename, vector<Fetus> fetus_data)
     }
     fs.close();
 }
+
+struct Result
+{
+    int id;
+    double w, d, cw, cd;
+    double last_t;
+    Result(int id, double w, double d, double cw, double cd, double last_t)
+        : id(id), w(w), d(d), cw(cw), cd(cd), last_t(last_t)
+    {
+    }
+
+    double error() const
+    {
+        return calc_error(w, d, cw, cd);
+    }
+
+    string to_s(double sse0) const
+    {
+        char buf[128];
+        sprintf(buf, "%5d, %.4f: %5.0f, (%+.4f, %+.4f), (%.4f, %.4f), (%.4f, %.4f)", id, last_t, 1e6 * error() / sse0, w - cw, d - cd, w, d, cw, cd);
+        return buf;
+    }
+
+    string to_s_for_ana() const
+    {
+        stringstream ss;
+        ss
+            << id << " "        // 0
+            << last_t << " "    // 1
+            << w - cw << " "    // 2
+            << d - cd << " "    // 3
+            << w << " "         // 4
+            << d << " "         // 5
+            << cw << " "        // 6
+            << cd;              // 7
+        return ss.str();
+    }
+
+    bool operator<(const Result& r) const
+    {
+        return error() < r.error();
+    }
+};
+vector<Result> get_results(const vector<Fetus>& test_data, map<int, double>& predict_weight, map<int, double>& predict_duration)
+{
+    vector<Result> results;
+    for (auto& test : test_data)
+        results.push_back(Result(test.id, predict_weight[test.id], predict_duration[test.id], test.weight, test.duration, max_element(all(test.rows))->time));
+    return results;
+}
+
 int main()
 {
     const string train_filename = "exampleData.csv";
@@ -727,7 +709,7 @@ int main()
 //     return 0;
 
 //     srand(time(NULL));
-    const int T = 30;
+    const int T = 10;
     vector<vector<Fetus>> train_data_set;
     vector<vector<Fetus>> test_data_set;
     rep(_, T)
@@ -738,6 +720,9 @@ int main()
 
         random_shuffle(all(fetus_data));
     }
+
+//     predict_by_dctree(train_data_set[0], test_data_set[0]);
+//     return 0;
 
     vector<double> scores(T);
 #pragma omp parallel for
@@ -752,7 +737,25 @@ int main()
         auto& predict_duration = res.second;
 
         double score = calc_score(test_data, predict_weight, predict_duration);
-//         dump(score);
+
+        double sse0 = calc_sse0(test_data);
+        double sse = calc_sse(test_data, predict_weight, predict_duration);
+
+//         if (score < 380000)
+//         {
+// //             dump(score);
+// //             dump(sse0);
+// //             dump(sse);
+//
+//             auto results = get_results(test_data, predict_weight, predict_duration);
+//             sort(all(results));
+// //             rep(i, 10)
+// //                 cout << results[i].to_s(sse0) << endl;
+// //             cout << endl;
+//             rep(i, results.size())
+//                 cout << results[results.size() - 1 - i].to_s_for_ana() << endl;
+//             exit(0);
+//         }
 
         scores[test_i] = score;
     }
@@ -765,35 +768,3 @@ int main()
 #endif
 
 
-
-class ChildStuntedness
-{
-public:
-    vector<double> predict(vector<string>& training, vector<string>& testing)
-    {
-        g_timer.start();
-
-        auto train_data = parse_train(training);
-        auto test_data = parse_test(testing);
-
-        dump(g_timer.get_elapsed());
-
-        auto prepre = ::predict(train_data, test_data);
-        auto& predict_weight = prepre.first;
-        auto& predict_duration = prepre.second;
-
-        vector<int> ids;
-        for (auto& test : test_data)
-            ids.push_back(test.id);
-        sort(all(ids));
-        vector<double> res;
-        for (int id : ids)
-        {
-            assert(predict_weight.count(id));
-            assert(predict_duration.count(id));
-            res.push_back(predict_duration[id]);
-            res.push_back(predict_weight[id]);
-        }
-        return res;
-    }
-};

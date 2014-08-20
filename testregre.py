@@ -55,7 +55,12 @@ def calc_sse(results):
 
 def do_test(train_data, test_data):
     def build(a, b):
-        return RandomForestRegressor(n_estimators=100, min_samples_split=30).fit(a, b)
+        from sklearn import grid_search
+        params = {
+                'min_samples_split': [2, 4, 8, 16, 32, 64]
+                }
+        return grid_search.GridSearchCV(RandomForestRegressor(n_estimators=300), params).fit(a, b)
+#         return RandomForestRegressor(n_estimators=100, min_samples_split=30).fit(a, b)
 
     weight_rf = build(train_data[0], train_data[1])
     duration_rf = build(train_data[0], train_data[2])
@@ -72,7 +77,7 @@ def do_test(train_data, test_data):
     return score
 
 scores = []
-for _ in range(30):
+for _ in range(100):
     features, weights, durations = shuffle_data(features, weights, durations)
     train_data, test_data = split_train_and_test(features, weights, durations)
     score = do_test(train_data, test_data)
