@@ -427,18 +427,18 @@ Feature create_feature(const Fetus& fetus)
             var += (last.ultra[i] - ave) * (last.ultra[i] - ave);
         var /= ULTRA_SIZE;
 
-//         feature.push_back(ave);
-//         feature.push_back(var);
+        feature.push_back(ave);
+        feature.push_back(var);
 
 
         auto first = *min_element(all(fetus.rows));
 
-//         feature.push_back(first.ultra[0]);
+        feature.push_back(first.ultra[0]);
 
-//         feature.push_back(first.time);
+        feature.push_back(first.time);
         feature.push_back(last.time);
 
-//         feature.push_back(last.time - first.time);
+        feature.push_back(last.time - first.time);
     }
 
     feature.push_back(fetus.rows.size());
