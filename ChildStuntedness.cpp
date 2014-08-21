@@ -149,7 +149,7 @@ public:
         rep(i, n)
             a[i] = i;
         rep(i, n)
-            swap(a[i], a[next_int(n)]);
+            swap(a[i], a[next_int(i + 1)]);
         a.erase(a.begin() + k, a.end());
         return a;
     }
@@ -163,14 +163,14 @@ struct DecisionTreeConfig
 {
     int bag_size;
     int max_level;
-    int leaf_size;
+    int min_split_size;
     int split_dimension_samples;
 
     DecisionTreeConfig()
         :
             bag_size(-1),
             max_level(-1),
-            leaf_size(-1),
+            min_split_size(-1),
             split_dimension_samples(-1)
     {
     }
@@ -185,11 +185,12 @@ public:
         const int FEATURE_SIZE = features[0].size();
 
         const int max_level = config.max_level;
-        const int leaf_size = config.leaf_size;
+        const int min_split_size = config.min_split_size;
         const int SPLIT_DIMENSION_SAMPLES = config.split_dimension_samples;
         const int bag_size = max<int>(1, config.bag_size);
         assert(0 < SPLIT_DIMENSION_SAMPLES && SPLIT_DIMENSION_SAMPLES <= FEATURE_SIZE);
         assert(0 < bag_size && bag_size <= (int)features.size());
+
 
         // TODO: 重複には(* count)の重みをかける
         vector<int> bag(bag_size);
@@ -199,7 +200,6 @@ public:
 
         nodes.push_back(TreeNode(0));
 
-        // TODO: vector<int>はやめる。inplaceな配列一個持って、(left, right)をstackに突っ込む
         stack<pair<int, vector<int>>> sta;
         sta.push(make_pair(0, bag));
         while (!sta.empty())
@@ -209,7 +209,12 @@ public:
             assert(!cur_features.empty());
             sta.pop();
 
-            if (nodes[cur_node].level >= max_level || (int)cur_features.size() <= leaf_size)
+            double ave = 0;
+            for (int i : cur_features)
+                ave += label[i];
+            ave /= cur_features.size();
+
+            if (nodes[cur_node].level >= max_level || (int)cur_features.size() <= min_split_size)
             {
                 double ave = 0;
                 for (int i : cur_features)
@@ -248,7 +253,7 @@ public:
                 double left_squared_sum = 0;
                 double left_sum = 0;
 
-                const int split_size_constraint = max(1, leaf_size / 2);
+                const int split_size_constraint = max(1, min_split_size / 2);
                 const double split_lower_x = x.front().first + eps;
                 const double split_upper_x = x.back().first - eps;
                 rep(i, sz(cur_features) - split_size_constraint)
@@ -305,8 +310,6 @@ public:
             assert(!left_features.empty());
             assert(!right_features.empty());
 
-//             printf("%3d %3d\n", (int)left_features.size(), (int)right_features.size());
-
             nodes[cur_node].left = nodes.size();
             nodes.push_back(TreeNode(nodes[cur_node].level + 1));
             sta.push(make_pair(nodes[cur_node].left, left_features));
@@ -355,16 +358,8 @@ private:
 class RandomForest
 {
 public:
-    RandomForest(const vector<Feature>& features, const vector<double>& labels, int num_trees = 100, double tle = 1e9)
+    RandomForest(const vector<Feature>& features, const vector<double>& labels, const DecisionTreeConfig& config, int num_trees, double tle)
     {
-        const int FEATURE_SIZE = features[0].size();
-
-        DecisionTreeConfig config;
-        config.bag_size = features.size();
-        config.max_level = 256;
-        config.leaf_size = 40;
-        config.split_dimension_samples = FEATURE_SIZE;
-
         Timer timer;
         timer.start();
         while ((int)trees.size() < num_trees && timer.get_elapsed() < tle)
@@ -418,6 +413,7 @@ Feature create_feature(const Fetus& fetus)
 
     {
         auto last = *max_element(all(fetus.rows));
+
         rep(i, ULTRA_SIZE)
             feature.push_back(last.ultra[i]);
 
@@ -434,21 +430,15 @@ Feature create_feature(const Fetus& fetus)
         feature.push_back(ave);
         feature.push_back(var);
 
+
         auto first = *min_element(all(fetus.rows));
+
         feature.push_back(first.ultra[0]);
-    }
 
-    {
-        double min_t = 1e6, max_t = -1e6;
-        for (auto& row : fetus.rows)
-        {
-            upmin(min_t, row.time);
-            upmax(max_t, row.time);
-        }
+        feature.push_back(first.time);
+        feature.push_back(last.time);
 
-        feature.push_back(min_t);
-        feature.push_back(max_t);
-        feature.push_back(max_t - min_t);
+        feature.push_back(last.time - first.time);
     }
 
     feature.push_back(fetus.rows.size());
@@ -518,19 +508,30 @@ pair<map<int, double>, map<int, double>> predict(const vector<Fetus>& train_data
         duration_label.push_back(train.duration);
     }
 
+    const int FEATURE_SIZE = train_features[0].size();
     const double RF_TLE = G_TLE * 0.43;
-    const int MAX_TREES = 1000;
+    const int MAX_TREES = 1200;
 
     map<int, double> predict_weight;
     {
-        RandomForest rf(train_features, weight_label, MAX_TREES, RF_TLE);
+        DecisionTreeConfig config;
+        config.bag_size = train_features.size();
+        config.max_level = 256;
+        config.min_split_size = 40;
+        config.split_dimension_samples = FEATURE_SIZE;
+        RandomForest rf(train_features, weight_label, config, MAX_TREES, RF_TLE);
         for (auto& test : test_data)
             predict_weight[test.id] = rf.predict(create_feature(test));
     }
 
     map<int, double> predict_duration;
     {
-        RandomForest rf(train_features, duration_label, MAX_TREES, RF_TLE);
+        DecisionTreeConfig config;
+        config.bag_size = train_features.size();
+        config.max_level = 256;
+        config.min_split_size = 80;
+        config.split_dimension_samples = FEATURE_SIZE;
+        RandomForest rf(train_features, duration_label, config, MAX_TREES, RF_TLE);
         for (auto& test : test_data)
             predict_duration[test.id] = rf.predict(create_feature(test));
     }
@@ -708,8 +709,8 @@ int main()
 //     write_features_labels("features.txt", fetus_data);
 //     return 0;
 
-//     srand(time(NULL));
-    const int T = 10;
+    srand(time(NULL));
+    const int T = 100;
     vector<vector<Fetus>> train_data_set;
     vector<vector<Fetus>> test_data_set;
     rep(_, T)
@@ -740,22 +741,22 @@ int main()
 
         double sse0 = calc_sse0(test_data);
         double sse = calc_sse(test_data, predict_weight, predict_duration);
+        if (score < 380000 && false)
+        {
+            dump(score);
+            dump(sse0);
+            dump(sse);
 
-//         if (score < 380000)
-//         {
-// //             dump(score);
-// //             dump(sse0);
-// //             dump(sse);
-//
-//             auto results = get_results(test_data, predict_weight, predict_duration);
-//             sort(all(results));
-// //             rep(i, 10)
-// //                 cout << results[i].to_s(sse0) << endl;
-// //             cout << endl;
+            auto results = get_results(test_data, predict_weight, predict_duration);
+            sort(all(results));
+//             rep(i, 10)
+//                 cout << results[i].to_s(sse0) << endl;
+//             cout << endl;
 //             rep(i, results.size())
 //                 cout << results[results.size() - 1 - i].to_s_for_ana() << endl;
-//             exit(0);
-//         }
+            rep(i, 40)
+                cout << results[results.size() - 1 - i].to_s(sse0) << endl;
+        }
 
         scores[test_i] = score;
     }
@@ -768,3 +769,32 @@ int main()
 #endif
 
 
+class ChildStuntedness
+{
+public:
+    vector<double> predict(vector<string>& training, vector<string>& testing)
+    {
+        g_timer.start();
+
+        auto train_data = parse_train(training);
+        auto test_data = parse_test(testing);
+
+        auto prepre = ::predict(train_data, test_data);
+        auto& predict_weight = prepre.first;
+        auto& predict_duration = prepre.second;
+
+        vector<int> ids;
+        for (auto& test : test_data)
+            ids.push_back(test.id);
+        sort(all(ids));
+        vector<double> res;
+        for (int id : ids)
+        {
+            assert(predict_weight.count(id));
+            assert(predict_duration.count(id));
+            res.push_back(predict_duration[id]);
+            res.push_back(predict_weight[id]);
+        }
+        return res;
+    }
+};

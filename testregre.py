@@ -55,6 +55,8 @@ def calc_sse(results):
 
 def do_test(train_data, test_data):
     def build(a, b):
+        from sklearn import svm
+        return svm.SVR(kernel='linear').fit(a, b)
         from sklearn import grid_search
         params = {
                 'min_samples_split': [2, 4, 8, 16, 32, 64]
